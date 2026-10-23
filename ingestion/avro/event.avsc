@@ -1,0 +1,19 @@
+{
+  "type": "record",
+  "name": "ShopEvent",
+  "namespace": "vn.edu.hust.shoppulse",
+  "doc": "Sự kiện hành vi trên topic shoppulse.events. Thay đổi schema phải tương thích ngược (chỉ thêm trường có default).",
+  "fields": [
+    {"name": "event_id", "type": "string", "doc": "SHA-1(event_time|event_type|product_id|user_id|user_session)"},
+    {"name": "event_time", "type": "string", "doc": "UTC, định dạng yyyy-MM-dd HH:mm:ss"},
+    {"name": "event_type", "type": {"type": "enum", "name": "EventType", "symbols": ["view", "cart", "remove_from_cart", "purchase"]}},
+    {"name": "product_id", "type": "long"},
+    {"name": "category_id", "type": ["null", "long"], "default": null},
+    {"name": "category_code", "type": ["null", "string"], "default": null},
+    {"name": "brand", "type": ["null", "string"], "default": null},
+    {"name": "price", "type": ["null", "double"], "default": null},
+    {"name": "user_id", "type": "long"},
+    {"name": "user_session", "type": ["null", "string"], "default": null},
+    {"name": "ingest_ts", "type": "long", "doc": "epoch millis lúc gửi (đo độ trễ end-to-end)"}
+  ]
+}
