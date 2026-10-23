@@ -1,0 +1,17 @@
+# [TV2] Cho worker Airflow tạo/theo dõi SparkApplication
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: airflow-spark-submit, namespace: compute}
+rules:
+  - apiGroups: [sparkoperator.k8s.io]
+    resources: [sparkapplications, sparkapplications/status]
+    verbs: [create, get, list, watch, delete, patch]
+  - apiGroups: [""]
+    resources: [pods, pods/log]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: airflow-spark-submit, namespace: compute}
+subjects: [{kind: ServiceAccount, name: airflow-worker, namespace: compute}]
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: airflow-spark-submit}

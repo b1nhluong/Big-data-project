@@ -1,0 +1,27 @@
+# [TV2] helm install airflow apache-airflow/airflow -n compute -f infra/k8s/airflow/values.yaml
+executor: KubernetesExecutor
+defaultAirflowTag: "2.10.5"
+dags:
+  gitSync:
+    enabled: true
+    repo: https://github.com/<NHOM>/shoppulse.git     # TODO: đổi thành repo của nhóm
+    branch: main
+    subPath: ""
+    wait: 60
+extraEnv: |
+  - name: AIRFLOW__CORE__LOAD_EXAMPLES
+    value: "False"
+  - name: AIRFLOW_CONN_KUBERNETES_DEFAULT
+    value: "kubernetes://?__extra__=%7B%22in_cluster%22%3A+true%7D"
+# Worker pod (KubernetesExecutor) cần quyền tạo SparkApplication trong ns compute
+workers:
+  serviceAccount: {create: true, name: airflow-worker}
+  resources: {requests: {cpu: 100m, memory: 512Mi}, limits: {memory: 1Gi}}
+scheduler:
+  resources: {requests: {cpu: 100m, memory: 512Mi}, limits: {memory: 1Gi}}
+webserver:
+  resources: {requests: {cpu: 100m, memory: 768Mi}, limits: {memory: 1Gi}}
+triggerer: {enabled: false}
+statsd: {enabled: true}          # metric DAG/task -> Prometheus (qua statsd-exporter)
+postgresql:
+  primary: {resources: {requests: {memory: 256Mi}, limits: {memory: 512Mi}}}
