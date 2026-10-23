@@ -1,0 +1,31 @@
+# [TV1] Phát lại dữ liệu vào Kafka. initContainer lấy file tháng từ HDFS về volume tạm.
+#   kubectl -n compute delete job replayer --ignore-not-found && kubectl apply -f infra/k8s/jobs/replayer.yaml
+apiVersion: batch/v1
+kind: Job
+metadata: {name: replayer, namespace: compute}
+spec:
+  backoffLimit: 0
+  template:
+    metadata: {labels: {app: replayer}}
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: fetch
+          image: shoppulse/hadoop:3.4.1   # infra/docker/hadoop (amd64 + arm64)
+          env: [{name: HADOOP_USER_NAME, value: spark}]
+          command: ["/bin/bash", "-c", "hdfs dfs -fs hdfs://hdfs-namenode.storage.svc.cluster.local:8020 -get /shoppulse/raw/2019-Nov.csv /data/"]
+          volumeMounts: [{name: data, mountPath: /data}]
+      containers:
+        - name: replayer
+          image: shoppulse/replayer:1.0
+          args: ["--input", "/data/*.csv", "--sink", "kafka", "--format", "json", "--speed", "60",
+                 "--rewrite-time", "--duplicate-rate", "0.01", "--late-rate", "0.02", "--max-late-s", "900",
+                 "--burst-start-min", "20", "--burst-duration-min", "5", "--burst-factor", "10"]
+          env:
+            - {name: SHOPPULSE_PROFILE, value: k8s}
+            - {name: KAFKA_USERNAME, value: replayer}
+            - name: KAFKA_PASSWORD
+              valueFrom: {secretKeyRef: {name: replayer-kafka, key: password}}   # copy từ Secret "replayer" ns kafka
+          resources: {requests: {cpu: 250m, memory: 512Mi}, limits: {memory: 1Gi}}
+          volumeMounts: [{name: data, mountPath: /data}]
+      volumes: [{name: data, emptyDir: {sizeLimit: 12Gi}}]
