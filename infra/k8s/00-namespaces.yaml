@@ -1,0 +1,31 @@
+# [TV1] Tách namespace theo vai trò -> NetworkPolicy, RBAC, ResourceQuota rõ ràng
+apiVersion: v1
+kind: Namespace
+metadata: {name: kafka, labels: {shoppulse/tier: ingestion}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: storage, labels: {shoppulse/tier: storage}}      # HDFS, Cassandra, Redis, PostgreSQL
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: compute, labels: {shoppulse/tier: compute}}      # Spark, Airflow, replayer
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: serving, labels: {shoppulse/tier: serving}}      # Trino, Hive Metastore, API, Superset
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: monitoring, labels: {shoppulse/tier: monitoring}}
+---
+# Giới hạn tổng tài nguyên compute để job Spark lỗi không nuốt hết RAM của laptop
+apiVersion: v1
+kind: ResourceQuota
+metadata: {name: compute-quota, namespace: compute}
+spec:
+  hard:
+    requests.cpu: "6"
+    requests.memory: 12Gi
+    limits.memory: 16Gi
+    pods: "40"
