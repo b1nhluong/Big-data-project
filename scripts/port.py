@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Đưa phần việc của một thành viên từ repo tham chiếu sang repo chính, rồi commit bằng tài khoản của chính người đó.
+"""Đưa phần việc của một thành viên từ repo tham chiếu sang repo chính, commit bằng tài khoản của chính người đó.
 
-Cách dùng (chạy trong thư mục repo chính):
-    python3.11 scripts/port.py tv2 1            # TV2, tuần 1
-    python3.11 scripts/port.py tv2 1 --dry-run  # chỉ xem sẽ lấy file nào, không đổi gì
-    python3.11 scripts/port.py --status         # tiến độ cả nhóm, tuần 1-4
+Cách dùng (chạy trong thư mục repo chính, trên nhánh main):
+    python3.11 scripts/port.py tv2 --dry-run   # xem trước sẽ lấy file nào, chia thành những commit nào
+    python3.11 scripts/port.py tv2             # lấy file, hỏi trước từng commit, đẩy lên main
+    python3.11 scripts/port.py --status        # tiến độ cả nhóm
 
+Mặc định lấy toàn bộ phần việc tới checkpoint 26/10. Sau này lấy thêm: --upto 6 (tới tuần 6).
 Windows: thay `python3.11` bằng `py -3.11`.
 
 Script đọc danh mục file `docs/ke-hoach/file-index.md` trong repo tham chiếu, lấy đúng các file của
-người đó trong tuần đó, gom theo commit gợi ý và hỏi trước từng commit. Không có gì được đẩy lên
-GitHub cho tới khi bạn đồng ý ở bước cuối.
+người đó, gom theo việc thành từng commit và hỏi trước mỗi commit. Không có gì được đẩy lên GitHub
+cho tới khi bạn đồng ý ở bước cuối.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ REF_URL = "https://github.com/b1nhluong/big_data_claude.git"
 REF_BRANCH = "ref/main"
 INDEX_PATH = "docs/ke-hoach/file-index.md"
 MEMBERS = ["tv1", "tv2", "tv3", "tv4", "tv5"]
+CHECKPOINT_UPTO = 4   # checkpoint 26/10: phần việc tới hết tuần 4
 
 # File "(đi kèm)" không tự khớp được với commit nào hợp lý: gắn vào commit của file mốc.
 ATTACH_TO = {
@@ -35,8 +37,7 @@ ATTACH_TO = {
     "infra/docker/replayer/Dockerfile": "ingestion/replayer.py",
     "infra/k8s/jobs/replayer.yaml": "ingestion/replayer.py",
 }
-# Đổi tuần so với file-index: test exactly-once import streaming.kpi_minute (tuần 4),
-# để ở tuần 3 thì pytest trong CI đỏ. Cùng người (TV3), chỉ dời sang tuần 4.
+# Đổi tuần so với file-index: test exactly-once import streaming.kpi_minute (tuần 4).
 WEEK_OVERRIDE = {
     "tests/integration/test_streaming_exactly_once.py": 4,
 }
@@ -54,17 +55,20 @@ RESULT_JOBS = {
     "optimization": "python -m batch.optimization --repeat 3",
     "mapreduce_vs_spark": "xem bước 7 trong scripts/run_local_pipeline.sh",
 }
-
 # Gợi ý cách lấy số liệu cho file phải viết lại.
 REWRITE_HINTS = {
     "docs/eda.md": "khi đã có bronze thật, chạy SHOPPULSE_PROFILE=local python -m batch.eda --fraction 0.01 để sinh lại file",
     "docs/report/bao-cao.md": "mục 1 dùng số thật: 109.950.743 sự kiện tháng 10-11/2019, CSV 13,7 GB",
 }
+# CI chỉ chạy pytest khi code của cả nhóm đã có trên main, nếu không CI sẽ đỏ.
+PYTEST_CI_MSG = "ci: run unit and integration tests with pytest"
+CODE_PREFIXES = ("shoppulse/", "ingestion/", "batch/", "streaming/", "ml/", "serving/", "tests/", "conf/",
+                 "requirements", "pytest.ini")
 
-# CI tuần 1-2: chưa có requirements và test, nên chỉ chạy ruff + kubeconform (khi đã có infra/k8s).
-# TV5 bật pytest ở tuần 3 bằng ci.yml đầy đủ của repo tham chiếu.
+# CI ban đầu (TV1): chưa có requirements và test, nên chỉ chạy ruff + kubeconform (khi đã có infra/k8s).
+# TV5 bật pytest bằng ci.yml đầy đủ của repo tham chiếu khi code của cả nhóm đã có.
 CI_EARLY = """\
-# Chạy mỗi push/PR: lint + kiểm tra manifest K8s. TV5 thêm job pytest ở tuần 3.
+# Chạy mỗi push/PR: lint + kiểm tra manifest K8s. TV5 bật pytest khi code của cả nhóm đã có.
 name: ci
 on:
   push: {branches: [main]}
@@ -130,8 +134,13 @@ def ask(question: str, default: str = "y", auto: bool = False) -> str:
     except EOFError:
         ans = ""
     if ans == "q":
-        die("Bạn đã dừng. Những commit đã tạo vẫn nằm trên nhánh hiện tại (chưa đẩy lên GitHub).")
+        die("Bạn đã dừng. Những commit đã tạo vẫn nằm trên máy bạn, chưa đẩy lên GitHub. "
+            "Chạy lại script để làm tiếp.")
     return ans or default
+
+
+def head_files() -> set[str]:
+    return set(git("ls-tree", "-r", "--name-only", "HEAD").splitlines())
 
 
 # ---------------------------------------------------------------- đọc danh mục file
@@ -166,6 +175,7 @@ def parse_index(text: str) -> list[Entry]:
         else:
             msg = re.match(r"`([^`]+)`", note)
             entries.append(Entry(member, week_of, path, "commit", msg.group(1) if msg else "chore: add files", rewrite))
+    entries.sort(key=lambda e: e.week)   # ổn định: giữ thứ tự trong cùng tuần
     return entries
 
 
@@ -175,6 +185,7 @@ class Group:
     files: list[str] = field(default_factory=list)
     rewrite: list[str] = field(default_factory=list)
     special: dict[str, str] = field(default_factory=dict)  # path -> nội dung thay cho bản tham chiếu
+    gated: bool = False                                     # chỉ làm khi code cả nhóm đã có
 
 
 def common_prefix_len(a: str, b: str) -> int:
@@ -186,19 +197,20 @@ def common_prefix_len(a: str, b: str) -> int:
     return n
 
 
-def build_groups(entries: list[Entry], member: str, week: int) -> tuple[list[Group], list[str]]:
-    mine = [e for e in entries if e.member == member and e.week == week]
+def build_groups(entries: list[Entry], member: str, upto: int) -> tuple[list[Group], list[str]]:
+    mine = [e for e in entries if e.member == member and e.week <= upto]
     groups: "OrderedDict[str, Group]" = OrderedDict()
     owner_of: dict[str, str] = {}
 
     def add(msg: str, e: Entry) -> None:
         g = groups.setdefault(msg, Group(msg))
+        if e.path in g.files:
+            return
         g.files.append(e.path)
         owner_of[e.path] = msg
         if e.rewrite:
             g.rewrite.append(e.path)
 
-    # Tuần 1-2: ci.yml rút gọn, commit riêng như trong docs/weekly/week-01.md
     for e in mine:
         if e.kind == "commit":
             add("ci: add ruff and kubeconform checks" if e.path == ".github/workflows/ci.yml" else e.message, e)
@@ -222,13 +234,22 @@ def build_groups(entries: list[Entry], member: str, week: int) -> tuple[list[Gro
 
     out = list(groups.values())
     for g in out:
-        if ".github/workflows/ci.yml" in g.files and week < 3:
+        if ".github/workflows/ci.yml" in g.files:
             g.special[".github/workflows/ci.yml"] = CI_EARLY
-    # TV5 tuần 3: bật pytest trong CI bằng ci.yml đầy đủ
-    if member == "tv5" and week == 3:
-        out.append(Group("ci: run unit and integration tests with pytest", [".github/workflows/ci.yml"]))
+    if member == "tv5" and upto >= 3:
+        out.append(Group(PYTEST_CI_MSG, [".github/workflows/ci.yml"], gated=True))
     results = [e.path for e in mine if e.kind == "result"]
     return out, results
+
+
+def missing_for_pytest(entries: list[Entry], upto: int) -> dict[str, list[str]]:
+    """Code của các thành viên (tới tuần upto) chưa có trên HEAD: {thành viên: [file]}."""
+    have, out = head_files(), {}
+    for e in entries:
+        if e.week <= upto and e.kind != "result" and not e.rewrite and e.path.startswith(CODE_PREFIXES):
+            if e.path not in have:
+                out.setdefault(e.member, []).append(e.path)
+    return out
 
 
 # ---------------------------------------------------------------- biến đổi riêng
@@ -263,7 +284,11 @@ def write_file(path: str, content: str) -> None:
 
 
 def checkout(group: Group) -> None:
-    plain = [f for f in group.files if f not in group.special and f != "README.md"]
+    # File phải viết lại mà người dùng đã có bản riêng trên máy (vd. docs/eda.md vừa sinh từ dữ liệu thật): giữ nguyên.
+    keep = {f for f in group.rewrite if os.path.exists(f)}
+    for f in sorted(keep):
+        say(f"    giữ bản trên máy của bạn: {f}")
+    plain = [f for f in group.files if f not in group.special and f != "README.md" and f not in keep]
     if plain:
         git("checkout", REF_BRANCH, "--", *plain)
     for path, content in group.special.items():
@@ -272,16 +297,18 @@ def checkout(group: Group) -> None:
         write_file("README.md", adapt_readme(ref_content("README.md")))
 
 
+def wanted(group: Group, f: str) -> str:
+    if f in group.special:
+        return group.special[f]
+    return adapt_readme(ref_content(f)) if f == "README.md" else ref_content(f)
+
+
 def same_as_head(group: Group) -> bool:
     """True nếu mọi file của nhóm đã có trong HEAD với đúng nội dung sẽ commit."""
     for f in group.files:
         if not git_ok("cat-file", "-e", f"HEAD:{f}"):
             return False
-        head = git("show", f"HEAD:{f}")
-        want = group.special.get(f)
-        if want is None:
-            want = adapt_readme(ref_content(f)) if f == "README.md" else ref_content(f)
-        if head.strip() != want.strip():
+        if git("show", f"HEAD:{f}").strip() != wanted(group, f).strip():
             return False
     return True
 
@@ -296,7 +323,7 @@ def run_ruff(files: list[str]) -> bool:
     elif subprocess.run([sys.executable, "-m", "ruff", "--version"], capture_output=True).returncode == 0:
         cmd = [sys.executable, "-m", "ruff"]
     if not cmd:
-        say("    (chưa cài ruff, bỏ qua lint. Cài bằng: pip install ruff)")
+        say("    (chưa cài ruff, bỏ qua kiểm tra. Cài bằng: pip install ruff)")
         return True
     res = subprocess.run([*cmd, "check", "--select", "F,E9", "--line-length", "130", *py],
                          capture_output=True, text=True)
@@ -316,7 +343,7 @@ def ensure_ref() -> None:
     if "ref" not in remotes:
         say(f"Thêm remote 'ref' -> {REF_URL}")
         git("remote", "add", "ref", REF_URL)
-    say("Đang tải repo tham chiếu (git fetch ref)...")
+    say("Đang tải repo tham chiếu...")
     git("fetch", "-q", "ref")
     if "origin" in remotes:
         git("fetch", "-q", "origin", check=False)
@@ -326,108 +353,98 @@ def load_entries() -> list[Entry]:
     return parse_index(ref_content(INDEX_PATH))
 
 
-def origin_web_url() -> str:
-    url = git("remote", "get-url", "origin", check=False)
-    m = re.search(r"github\.com[:/](.+?)(\.git)?$", url)
-    return f"https://github.com/{m.group(1)}" if m else ""
+def sync_main() -> None:
+    """Đứng trên main và kéo bản mới nhất về."""
+    if git("status", "--porcelain", "--untracked-files=no"):
+        die("Có thay đổi chưa commit trong repo. Chạy `git stash` rồi chạy lại script (xong thì `git stash pop`).")
+    if git("rev-parse", "--abbrev-ref", "HEAD") != "main":
+        git("switch", "-q", "main")
+    if git_ok("rev-parse", "--verify", "-q", "origin/main"):
+        git("pull", "-q", "--rebase", "origin", "main")
 
 
-def cmd_status(weeks: list[int]) -> None:
+def push_main() -> None:
+    for _ in range(3):
+        if not git_ok("pull", "-q", "--rebase", "origin", "main"):
+            git("rebase", "--abort", check=False)
+            die("Không gộp được với bản mới nhất trên GitHub (có người sửa cùng file). Báo TV1.")
+        if git_ok("push", "-q", "origin", "main"):
+            say("Đã đẩy lên GitHub (nhánh main).")
+            return
+    die("Đẩy lên không thành công sau 3 lần. Chạy lại: git pull --rebase origin main && git push origin main")
+
+
+def cmd_status(upto: int) -> None:
     ensure_ref()
     entries = load_entries()
     base = os.environ.get("PORT_BASE") or ("origin/main" if git_ok("rev-parse", "--verify", "-q", "origin/main") else "HEAD")
     have = set(git("ls-tree", "-r", "--name-only", base).splitlines())
-    branches = git("branch", "-r", "--format=%(refname:short)", check=False).splitlines()
-    say(f"\nTiến độ trên {base} (đếm file đã có, không tính file kết quả):\n")
-    say("Tuần  " + "  ".join(f"{m.upper():>9}" for m in MEMBERS))
-    for w in weeks:
-        cells = []
-        for m in MEMBERS:
-            files = [e.path for e in entries if e.member == m and e.week == w and e.kind != "result"]
-            if not files:
-                cells.append(f"{'—':>9}")
-                continue
-            done = sum(f in have for f in files)
-            mark = "xong" if done == len(files) else f"{done}/{len(files)}"
-            cells.append(f"{mark:>9}")
-        say(f"{w:>4}  " + "  ".join(cells))
-    pending = [b for b in branches if re.match(r"origin/tv\d/week-\d\d", b)]
-    if pending:
-        say("\nNhánh đã đẩy lên (kiểm tra PR đã merge chưa):")
-        for b in pending:
-            merged = git_ok("merge-base", "--is-ancestor", b, base)
-            say(f"  {b:<28} {'đã merge' if merged else 'CHƯA merge'}")
+    say(f"\nTiến độ trên {base}, phần việc tới tuần {upto} (không tính file kết quả):\n")
     missing = []
-    for w in weeks:
-        for e in entries:
-            if e.week == w and e.kind != "result" and e.path not in have:
-                missing.append(e)
+    for m in MEMBERS:
+        files = [e for e in entries if e.member == m and e.week <= upto and e.kind != "result"]
+        done = sum(e.path in have for e in files)
+        mark = "xong" if done == len(files) else f"{done}/{len(files)} file"
+        authors = git("log", base, "--format=%an", "--", *[e.path for e in files], check=False) if files else ""
+        names = ", ".join(sorted(set(authors.splitlines()))) or "chưa ai commit"
+        say(f"  {m.upper()}: {mark:<12} người commit: {names}")
+        missing += [e for e in files if e.path not in have]
+    ci = git("show", f"{base}:.github/workflows/ci.yml", check=False)
+    say("\nCI chạy pytest: " + ("đã bật" if "pytest" in ci else "chưa (TV5 bật khi code cả nhóm đã có)"))
     if missing:
-        say("\nCòn thiếu (người · tuần · file):")
-        for e in missing[:60]:
-            say(f"  {e.member.upper()} · tuần {e.week} · {e.path}")
-        if len(missing) > 60:
-            say(f"  ... và {len(missing) - 60} file nữa")
+        say("\nCòn thiếu:")
+        for e in missing[:40]:
+            say(f"  {e.member.upper()} · {e.path}")
+        if len(missing) > 40:
+            say(f"  ... và {len(missing) - 40} file nữa")
 
 
-def cmd_port(member: str, week: int, dry: bool, auto: bool, push: bool | None) -> None:
+def cmd_port(member: str, upto: int, dry: bool, auto: bool, push: bool | None) -> None:
     ensure_ref()
     entries = load_entries()
-    groups, results = build_groups(entries, member, week)
+    if not dry:
+        sync_main()
+    groups, results = build_groups(entries, member, upto)
     if not groups and not results:
-        say(f"\n{member.upper()} không có file mới nào trong tuần {week}. "
-            f"Xem việc của tuần này trong docs/weekly/week-{week:02d}.md.")
+        say(f"\n{member.upper()} không có file nào tới tuần {upto}.")
         return
 
     name, email = git("config", "user.name", check=False), git("config", "user.email", check=False)
-    say(f"\n{member.upper()} · tuần {week} · commit sẽ mang tên: {name or '(chưa đặt)'} <{email or '(chưa đặt)'}>")
+    say(f"\n{member.upper()} · commit sẽ mang tên: {name or '(chưa đặt)'} <{email or '(chưa đặt)'}>")
     if not name or not email:
         die('Chưa đặt tên/email git. Chạy: git config --global user.name "Tên"  và  '
             'git config --global user.email "email-GitHub-của-bạn"')
+    if member != "tv2" and "shoppulse/config.py" not in head_files():
+        say("Lưu ý: TV2 chưa đẩy phần lõi shoppulse/. Vẫn commit được, nhưng chạy thử code sẽ lỗi tới khi TV2 đẩy.")
 
-    # Cảnh báo phụ thuộc: file của các tuần trước chưa có trong repo
-    have = set(git("ls-tree", "-r", "--name-only", "HEAD").splitlines())
-    earlier = [e for e in entries if e.week < week and e.kind != "result" and e.path not in have]
-    if earlier:
-        who = sorted({f"{e.member.upper()} tuần {e.week}" for e in earlier})
-        say("\nLưu ý: repo chưa có đủ file của các tuần trước: " + ", ".join(who) +
-            ".\nVẫn commit được, nhưng test/chạy thử có thể lỗi cho tới khi các phần đó được merge.")
-
-    say("\nKế hoạch:")
+    say("\nSẽ tạo các commit sau:")
     for i, g in enumerate(groups, 1):
         done = same_as_head(g)
-        say(f"  {i}. {g.message}{'   (đã có, bỏ qua)' if done else ''}")
+        note = "   (đã có, bỏ qua)" if done else ("   (chỉ làm khi code cả nhóm đã có trên main)" if g.gated else "")
+        say(f"  {i}. {g.message}{note}")
         for f in g.files:
-            tag = "  ← PHẢI sửa số liệu" if f in g.rewrite else ("  ← bản rút gọn cho tuần 1-2" if f in g.special else "")
+            tag = "  ← PHẢI sửa số liệu" if f in g.rewrite else ("  ← bản chưa chạy test" if f in g.special else "")
             say(f"       {f}{tag}")
     if results:
         say("  Không chép (tự chạy job rồi commit kết quả thật):")
         for f in results:
             say(f"       {f}")
     if dry:
-        say("\n--dry-run: không thay đổi gì.")
+        say("\n--dry-run: chưa thay đổi gì.")
         return
 
-    if git("status", "--porcelain", "--untracked-files=no"):
-        die("Có thay đổi chưa commit trong repo. Commit hoặc `git stash` trước rồi chạy lại.")
-
-    branch = f"{member}/week-{week:02d}"
-    current = git("rev-parse", "--abbrev-ref", "HEAD")
-    if current != branch:
-        if current == "main" and git_ok("rev-parse", "--verify", "-q", "origin/main"):
-            git("merge", "-q", "--ff-only", "origin/main", check=False)
-        if git_ok("rev-parse", "--verify", "-q", branch):
-            git("switch", "-q", branch)
-        else:
-            git("switch", "-q", "-c", branch)
-    say(f"\nĐang ở nhánh {branch}")
-
     made = 0
-    skipped_rewrite = []
+    skipped_rewrite: list[str] = []
     for i, g in enumerate(groups, 1):
         if same_as_head(g):
             continue
         say(f"\n[{i}/{len(groups)}] {g.message}")
+        if g.gated:
+            missing = missing_for_pytest(entries, upto)
+            if missing:
+                say("  Chưa bật được: còn thiếu code của " + ", ".join(m.upper() for m in sorted(missing)) +
+                    ". Khi mọi người đã đẩy xong, chạy lại lệnh này để bật.")
+                continue
         if ask("  Lấy các file này và commit?", "y", auto) != "y":
             say("  Bỏ qua.")
             continue
@@ -454,7 +471,7 @@ def cmd_port(member: str, week: int, dry: bool, auto: bool, push: bool | None) -
             if f.endswith(".sh") and os.path.exists(f):
                 git("update-index", "--add", "--chmod=+x", f, check=False)
         if not run_ruff(g.files) and ask("  Vẫn commit?", "n", auto) != "y":
-            say("  Chưa commit. Sửa lỗi rồi chạy lại script, các file đã lấy vẫn nằm trong thư mục.")
+            say("  Chưa commit. Sửa lỗi rồi chạy lại script; các file đã lấy vẫn nằm trong thư mục.")
             return
         files = [f for f in g.files if os.path.exists(f) and f not in skipped_rewrite]
         if not files:
@@ -467,26 +484,25 @@ def cmd_port(member: str, week: int, dry: bool, auto: bool, push: bool | None) -
         made += 1
         say(f"  Đã commit: {git('log', '-1', '--format=%h %s')}")
 
-    say(f"\nĐã tạo {made} commit trên nhánh {branch}.")
+    ahead = git("rev-list", "--count", "origin/main..HEAD", check=False) if git_ok(
+        "rev-parse", "--verify", "-q", "origin/main") else str(made)
+    say(f"\nĐã tạo {made} commit mới. Chưa đẩy lên GitHub: {ahead or 0} commit.")
     if results:
-        say("\nViệc còn lại của bạn: chạy job để sinh file kết quả thật, rồi commit:")
+        say("\nViệc còn lại: chạy job trên dữ liệu thật để sinh file kết quả, rồi commit:")
         for f in results:
             stem = os.path.splitext(os.path.basename(f))[0]
             say(f"  {f}:  SHOPPULSE_PROFILE=local {RESULT_JOBS.get(stem, 'xem scripts/run_local_pipeline.sh')}")
-        say("  sau đó: git add benchmarks/results/<file>.json && git commit -m \"bench: <mô tả> on real data\"")
+        say('  sau đó: git add <file> && git commit -m "bench: <mô tả> on real data" && git push')
     if skipped_rewrite:
-        say("\nFile phải sửa số liệu chưa commit: " + ", ".join(skipped_rewrite))
-    if made == 0 and not git_ok("rev-parse", "--verify", "-q", f"origin/{branch}"):
+        say("\nFile phải sửa số liệu chưa commit: " + ", ".join(skipped_rewrite) +
+            ". Có số liệu thì chạy lại đúng lệnh này.")
+    if not ahead or ahead == "0":
         return
-
-    do_push = push if push is not None else (ask("\nĐẩy nhánh lên GitHub?", "y", auto) == "y")
+    do_push = push if push is not None else (ask("\nĐẩy lên GitHub?", "y", auto) == "y")
     if do_push:
-        git("push", "-u", "origin", branch, capture=False)
-        web = origin_web_url()
-        if web:
-            say(f"\nMở Pull Request tại: {web}/compare/main...{branch}?expand=1")
+        push_main()
     else:
-        say(f"\nKhi sẵn sàng: git push -u origin {branch}")
+        say("\nKhi sẵn sàng: git pull --rebase origin main && git push origin main")
 
 
 def main() -> None:
@@ -496,24 +512,22 @@ def main() -> None:
         pass
     p = argparse.ArgumentParser(description="Đưa phần việc từ repo tham chiếu sang repo chính.")
     p.add_argument("member", nargs="?", help="tv1..tv5")
-    p.add_argument("week", nargs="?", type=int, help="số tuần, ví dụ 1")
     p.add_argument("--status", action="store_true", help="xem tiến độ cả nhóm")
-    p.add_argument("--weeks", default="1-4", help="tuần cho --status, ví dụ 1-4")
-    p.add_argument("--dry-run", action="store_true", help="chỉ xem kế hoạch")
+    p.add_argument("--upto", type=int, default=CHECKPOINT_UPTO, help="lấy phần việc tới tuần này (mặc định 4)")
+    p.add_argument("--dry-run", action="store_true", help="chỉ xem trước, không thay đổi gì")
     p.add_argument("--yes", action="store_true", help="không hỏi (đồng ý tất cả)")
     p.add_argument("--no-push", action="store_true", help="không đẩy lên GitHub")
     a = p.parse_args()
     if a.status:
-        lo, _, hi = a.weeks.partition("-")
-        cmd_status(list(range(int(lo), int(hi or lo) + 1)))
+        cmd_status(a.upto)
         return
-    if not a.member or a.week is None:
+    if not a.member:
         p.print_help()
         sys.exit(2)
     member = a.member.lower()
     if member not in MEMBERS:
         die("Thành viên phải là tv1, tv2, tv3, tv4 hoặc tv5.")
-    cmd_port(member, a.week, a.dry_run, a.yes, False if a.no_push else None)
+    cmd_port(member, a.upto, a.dry_run, a.yes, False if a.no_push else None)
 
 
 if __name__ == "__main__":
