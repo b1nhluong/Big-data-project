@@ -1,0 +1,29 @@
+# [TV1] Topic khai báo dạng mã (Topic Operator đồng bộ vào cụm)
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata: {name: shoppulse.events, namespace: kafka, labels: {strimzi.io/cluster: shoppulse}}
+spec:
+  partitions: 6            # = số executor tối đa đọc song song; key = user_id -> thứ tự theo user
+  replicas: 3
+  config:
+    retention.ms: 604800000          # 7 ngày: đủ để phát lại (Kappa) hoặc khôi phục speed layer
+    min.insync.replicas: 2
+    compression.type: producer
+    max.message.bytes: 1048576
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata: {name: shoppulse.alerts, namespace: kafka, labels: {strimzi.io/cluster: shoppulse}}
+spec:
+  partitions: 3
+  replicas: 3
+  config: {retention.ms: 259200000, min.insync.replicas: 2}
+---
+# Topic compacted: chỉ giữ bản ghi MỚI NHẤT cho mỗi product_id (slide 5 — log compaction)
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata: {name: shoppulse.products, namespace: kafka, labels: {strimzi.io/cluster: shoppulse}}
+spec:
+  partitions: 3
+  replicas: 3
+  config: {cleanup.policy: compact, min.cleanable.dirty.ratio: 0.1, segment.ms: 3600000, min.insync.replicas: 2}

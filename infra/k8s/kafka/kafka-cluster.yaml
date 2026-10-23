@@ -1,0 +1,94 @@
+# [TV1] Cụm Kafka 3 node chế độ KRaft (mỗi node vừa controller vừa broker).
+# Slide chương 5 mô tả ZooKeeper; từ Kafka 4.0 ZooKeeper bị loại bỏ, metadata do quorum
+# controller KRaft (Raft) quản lý — cùng vai trò: bầu leader partition, lưu cấu hình cụm.
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: dual-role
+  namespace: kafka
+  labels: {strimzi.io/cluster: shoppulse}
+spec:
+  replicas: 3
+  roles: [controller, broker]
+  storage:
+    type: jbod
+    volumes:
+      - {id: 0, type: persistent-claim, size: 10Gi, deleteClaim: false, kraftMetadata: shared}
+  resources:
+    requests: {cpu: 250m, memory: 1Gi}
+    limits: {memory: 1536Mi}
+  jvmOptions: {"-Xms": 512m, "-Xmx": 768m}
+  template:
+    pod:
+      affinity:
+        podAntiAffinity:   # mỗi broker một node (laptop) nếu có thể -> chịu được mất 1 máy
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector: {matchLabels: {strimzi.io/cluster: shoppulse}}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: shoppulse
+  namespace: kafka
+  annotations:
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  kafka:
+    version: 4.0.0
+    listeners:
+      - name: scram
+        port: 9094
+        type: internal
+        tls: false
+        authentication: {type: scram-sha-512}
+    authorization:
+      type: simple
+      superUsers: [admin]
+    config:
+      default.replication.factor: 3
+      min.insync.replicas: 2               # acks=all cần ≥ 2 bản sao đồng bộ -> chịu mất 1 broker
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      auto.create.topics.enable: false     # topic chỉ tạo qua KafkaTopic (GitOps)
+      unclean.leader.election.enable: false
+      log.retention.hours: 168
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef: {name: kafka-metrics, key: kafka-metrics-config.yml}
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+  kafkaExporter:          # xuất consumer lag cho Prometheus
+    topicRegex: "shoppulse.*"
+    groupRegex: ".*"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: kafka-metrics, namespace: kafka}
+data:
+  kafka-metrics-config.yml: |
+    lowercaseOutputName: true
+    rules:
+      - pattern: kafka.server<type=(.+), name=(.+), clientId=(.+), topic=(.+), partition=(.*)><>Value
+        name: kafka_server_$1_$2
+        type: GAUGE
+        labels: {clientId: "$3", topic: "$4", partition: "$5"}
+      - pattern: kafka.server<type=(.+), name=(.+)><>Value
+        name: kafka_server_$1_$2
+        type: GAUGE
+      - pattern: kafka.server<type=(.+), name=(.+)><>Count
+        name: kafka_server_$1_$2_total
+        type: COUNTER
+      - pattern: kafka.server<type=BrokerTopicMetrics, name=(.+), topic=(.+)><>OneMinuteRate
+        name: kafka_server_brokertopicmetrics_$1_rate
+        type: GAUGE
+        labels: {topic: "$2"}
+      - pattern: kafka.controller<type=(.+), name=(.+)><>Value
+        name: kafka_controller_$1_$2
+        type: GAUGE

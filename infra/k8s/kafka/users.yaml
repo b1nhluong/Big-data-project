@@ -1,0 +1,49 @@
+# [TV1] Người dùng SCRAM + ACL tối thiểu (least privilege). Strimzi tạo Secret cùng tên chứa mật khẩu.
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata: {name: admin, namespace: kafka, labels: {strimzi.io/cluster: shoppulse}}
+spec:
+  authentication: {type: scram-sha-512}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata: {name: replayer, namespace: kafka, labels: {strimzi.io/cluster: shoppulse}}
+spec:
+  authentication: {type: scram-sha-512}
+  authorization:
+    type: simple
+    acls:
+      - resource: {type: topic, name: shoppulse.events, patternType: literal}
+        operations: [Write, Describe]
+      - resource: {type: topic, name: shoppulse.products, patternType: literal}
+        operations: [Write, Describe]
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata: {name: spark, namespace: kafka, labels: {strimzi.io/cluster: shoppulse}}
+spec:
+  authentication: {type: scram-sha-512}
+  authorization:
+    type: simple
+    acls:
+      - resource: {type: topic, name: shoppulse., patternType: prefix}
+        operations: [Read, Describe]
+      - resource: {type: topic, name: shoppulse.alerts, patternType: literal}
+        operations: [Write]
+      - resource: {type: group, name: shoppulse-, patternType: prefix}
+        operations: [Read]
+      - resource: {type: group, name: spark-kafka-source-, patternType: prefix}
+        operations: [Read]
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata: {name: alert-consumer, namespace: kafka, labels: {strimzi.io/cluster: shoppulse}}
+spec:
+  authentication: {type: scram-sha-512}
+  authorization:
+    type: simple
+    acls:
+      - resource: {type: topic, name: shoppulse.alerts, patternType: literal}
+        operations: [Read, Describe]
+      - resource: {type: group, name: alerts-, patternType: prefix}
+        operations: [Read]

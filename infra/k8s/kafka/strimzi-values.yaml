@@ -1,0 +1,6 @@
+# [TV1] helm install strimzi strimzi/strimzi-kafka-operator -n kafka -f infra/k8s/kafka/strimzi-values.yaml
+# Phiên bản operator phải hỗ trợ Kafka 4.0 (KRaft, không còn ZooKeeper) — Strimzi >= 0.46.
+watchNamespaces: [kafka]
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {memory: 512Mi}
