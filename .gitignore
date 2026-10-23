@@ -1,0 +1,20 @@
+# dữ liệu & kết quả chạy
+# data: thư mục hoặc symlink tới dữ liệu — không bao giờ commit
+data
+spark-warehouse/
+metastore_db/
+derby.log
+*.crc
+# bí mật
+infra/k8s/security/secrets.yaml
+.env
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+# hệ điều hành / IDE
+.DS_Store
+.idea/
+.vscode/

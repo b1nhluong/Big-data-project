@@ -1,0 +1,20 @@
+# Mỗi thư mục có người chịu trách nhiệm chính (thay @tv1..@tv5 bằng username GitHub)
+/infra/            @tv1
+/ingestion/        @tv1
+/mapreduce/        @tv1
+/.github/          @tv1
+/shoppulse/        @tv2
+/batch/            @tv2
+/airflow/          @tv2
+/streaming/        @tv3
+/infra/docker/spark/ @tv3
+/infra/k8s/spark/  @tv3
+/ml/               @tv4
+/infra/k8s/hdfs/   @tv4
+/dashboards/superset/ @tv4
+/serving/          @tv5
+/infra/k8s/cassandra/ @tv5
+/infra/k8s/redis/  @tv5
+/infra/k8s/monitoring/ @tv5
+/dashboards/grafana/ @tv5
+/tests/            @tv5
