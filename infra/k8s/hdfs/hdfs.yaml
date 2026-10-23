@@ -1,0 +1,144 @@
+# [TV1] HDFS trên Kubernetes: 1 NameNode + 3 DataNode (slide 3.3).
+#  - dfs.replication = 3, block 128 MB
+#  - heartbeat 3 s; recheck 30 s -> DataNode chết được phát hiện sau ~90 s (mặc định ~10 phút)
+#    để demo tái nhân bản (re-replication) trong buổi bảo vệ
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: hadoop-config, namespace: storage}
+data:
+  core-site.xml: |
+    <configuration>
+      <property><name>fs.defaultFS</name><value>hdfs://hdfs-namenode.storage.svc.cluster.local:8020</value></property>
+      <property><name>hadoop.proxyuser.hive.hosts</name><value>*</value></property>
+      <property><name>hadoop.proxyuser.hive.groups</name><value>*</value></property>
+      <property><name>hadoop.proxyuser.trino.hosts</name><value>*</value></property>
+      <property><name>hadoop.proxyuser.trino.groups</name><value>*</value></property>
+    </configuration>
+  hdfs-site.xml: |
+    <configuration>
+      <property><name>dfs.replication</name><value>3</value></property>
+      <property><name>dfs.blocksize</name><value>134217728</value></property>
+      <property><name>dfs.namenode.name.dir</name><value>file:///data/nn</value></property>
+      <property><name>dfs.datanode.data.dir</name><value>file:///data/dn</value></property>
+      <property><name>dfs.namenode.rpc-bind-host</name><value>0.0.0.0</value></property>
+      <property><name>dfs.namenode.http-bind-host</name><value>0.0.0.0</value></property>
+      <property><name>dfs.namenode.datanode.registration.ip-hostname-check</name><value>false</value></property>
+      <property><name>dfs.heartbeat.interval</name><value>3</value></property>
+      <property><name>dfs.namenode.heartbeat.recheck-interval</name><value>30000</value></property>
+      <property><name>dfs.permissions.enabled</name><value>true</value></property>
+      <property><name>dfs.permissions.superusergroup</name><value>hadoop</value></property>
+      <property><name>dfs.namenode.acls.enabled</name><value>true</value></property>
+      <property><name>dfs.webhdfs.enabled</name><value>true</value></property>
+    </configuration>
+---
+apiVersion: v1
+kind: Service
+metadata: {name: hdfs-namenode, namespace: storage, labels: {app: hdfs-namenode}}
+spec:
+  selector: {app: hdfs-namenode}
+  ports:
+    - {name: rpc, port: 8020}
+    - {name: http, port: 9870}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: hdfs-namenode, namespace: storage}
+spec:
+  serviceName: hdfs-namenode
+  replicas: 1
+  selector: {matchLabels: {app: hdfs-namenode}}
+  template:
+    metadata: {labels: {app: hdfs-namenode}}
+    spec:
+      securityContext: {runAsUser: 1000, fsGroup: 1000}
+      containers:
+        - name: namenode
+          image: shoppulse/hadoop:3.4.1   # infra/docker/hadoop (amd64 + arm64)
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              if [ ! -d /data/nn/current ]; then hdfs namenode -format -nonInteractive -clusterId shoppulse; fi
+              exec hdfs namenode
+          env: [{name: HADOOP_CONF_DIR, value: /etc/hadoop-conf}, {name: HADOOP_HEAPSIZE_MAX, value: "768m"}]
+          ports: [{containerPort: 8020, name: rpc}, {containerPort: 9870, name: http}]
+          readinessProbe: {httpGet: {path: /, port: 9870}, initialDelaySeconds: 15, periodSeconds: 10}
+          resources: {requests: {cpu: 200m, memory: 768Mi}, limits: {memory: 1Gi}}
+          volumeMounts:
+            - {name: conf, mountPath: /etc/hadoop-conf}
+            - {name: data, mountPath: /data}
+      volumes: [{name: conf, configMap: {name: hadoop-config}}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 5Gi}}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: hdfs-datanode, namespace: storage}
+spec:
+  clusterIP: None
+  selector: {app: hdfs-datanode}
+  ports: [{name: data, port: 9866}, {name: http, port: 9864}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: hdfs-datanode, namespace: storage}
+spec:
+  serviceName: hdfs-datanode
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector: {matchLabels: {app: hdfs-datanode}}
+  template:
+    metadata: {labels: {app: hdfs-datanode}}
+    spec:
+      securityContext: {runAsUser: 1000, fsGroup: 1000}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector: {matchLabels: {app: hdfs-datanode}}
+      containers:
+        - name: datanode
+          image: shoppulse/hadoop:3.4.1   # infra/docker/hadoop (amd64 + arm64)
+          command: ["hdfs", "datanode"]
+          env: [{name: HADOOP_CONF_DIR, value: /etc/hadoop-conf}, {name: HADOOP_HEAPSIZE_MAX, value: "512m"}]
+          ports: [{containerPort: 9866, name: data}, {containerPort: 9864, name: http}]
+          resources: {requests: {cpu: 100m, memory: 512Mi}, limits: {memory: 768Mi}}
+          volumeMounts:
+            - {name: conf, mountPath: /etc/hadoop-conf}
+            - {name: data, mountPath: /data}
+      volumes: [{name: conf, configMap: {name: hadoop-config}}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 30Gi}}}
+---
+# Khởi tạo cây thư mục + phân quyền: Spark (uid spark) ghi lake, Trino/Hive chỉ đọc gold/silver
+apiVersion: batch/v1
+kind: Job
+metadata: {name: hdfs-init, namespace: storage}
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      securityContext: {runAsUser: 1000}
+      containers:
+        - name: init
+          image: shoppulse/hadoop:3.4.1   # infra/docker/hadoop (amd64 + arm64)
+          env: [{name: HADOOP_CONF_DIR, value: /etc/hadoop-conf}]
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              until hdfs dfsadmin -report | grep -q "Live datanodes (3)"; do echo "chờ DataNode..."; sleep 5; done
+              hdfs dfs -mkdir -p /shoppulse/raw /shoppulse/lake /shoppulse/checkpoints /shoppulse/models /shoppulse/warehouse
+              hdfs dfs -chown -R spark:shoppulse /shoppulse
+              hdfs dfs -chmod -R 750 /shoppulse
+              hdfs dfs -setfacl -R -m user:trino:r-x,user:hive:r-x /shoppulse/lake
+              hdfs dfs -setfacl -R -m default:user:trino:r-x,default:user:hive:r-x /shoppulse/lake
+              hdfs dfs -chmod 700 /shoppulse/raw      # bronze/raw chứa user_id gốc: chỉ Spark
+              hdfs dfs -ls -R /shoppulse | head -20
+          volumeMounts: [{name: conf, mountPath: /etc/hadoop-conf}]
+      volumes: [{name: conf, configMap: {name: hadoop-config}}]
