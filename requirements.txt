@@ -1,0 +1,11 @@
+# Thư viện Python chạy job (driver + executor) — cài vào image Spark
+pyspark==3.5.7
+pandas==2.2.3
+pyarrow==17.0.0
+numpy>=1.26,<2.1
+pyyaml>=6
+prometheus-client>=0.20
+redis>=5
+graphframes-py==0.12.2
+confluent-kafka>=2.5
+fastavro>=1.9

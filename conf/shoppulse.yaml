@@ -1,0 +1,61 @@
+# Cấu hình ShopPulse theo profile.
+# Chọn profile bằng biến môi trường SHOPPULSE_PROFILE (mặc định: local).
+# Mọi khoá có thể ghi đè bằng biến môi trường SHOPPULSE_<KHOÁ_VIẾT_HOA>,
+# ví dụ SHOPPULSE_KAFKA_BOOTSTRAP=broker:9092.
+
+common:
+  topic_events: shoppulse.events
+  topic_alerts: shoppulse.alerts
+  topic_products: shoppulse.products        # topic compacted: danh mục sản phẩm mới nhất
+  watermark_delay: "10 minutes"
+  session_gap_minutes: 30
+  kpi_window: "1 minute"
+  trending_window: "10 minutes"
+  trending_slide: "1 minute"
+  trending_top_k: 50
+  bot_max_views_per_session: 300
+  bot_max_views_per_second: 2.0
+  bot_min_events: 30
+  event_weights: {view: 1.0, cart: 3.0, remove_from_cart: -1.0, purchase: 5.0}
+  shuffle_partitions: 64
+  cassandra_keyspace: shoppulse
+
+profiles:
+  local:
+    spark_master: "local[*]"
+    shuffle_partitions: 8
+    raw_root: data/raw
+    lake_root: data/lake
+    checkpoint_root: data/checkpoints
+    models_root: data/models
+    stream_input_dir: data/stream_in       # replayer --sink files ghi JSON vào đây
+    warehouse_dir: data/warehouse
+    kafka_bootstrap: localhost:9092
+    cassandra_host: localhost
+    redis_host: localhost
+    redis_port: 6379
+    postgres_jdbc: jdbc:postgresql://localhost:5432/shoppulse
+    sink_mode: local                       # local = parquet idempotent, k8s = cassandra/redis/kafka
+    source_mode: files                     # files | kafka
+    metrics_port: 9108
+
+  k8s:
+    spark_master: null                     # do spark-submit / Spark Operator quyết định
+    shuffle_partitions: 64
+    raw_root: hdfs://hdfs-namenode.storage.svc.cluster.local:8020/shoppulse/raw
+    lake_root: hdfs://hdfs-namenode.storage.svc.cluster.local:8020/shoppulse/lake
+    checkpoint_root: hdfs://hdfs-namenode.storage.svc.cluster.local:8020/shoppulse/checkpoints
+    models_root: hdfs://hdfs-namenode.storage.svc.cluster.local:8020/shoppulse/models
+    stream_input_dir: null
+    warehouse_dir: hdfs://hdfs-namenode.storage.svc.cluster.local:8020/shoppulse/warehouse
+    hive_metastore_uri: thrift://hive-metastore.serving.svc.cluster.local:9083
+    kafka_bootstrap: shoppulse-kafka-bootstrap.kafka.svc.cluster.local:9094
+    kafka_security: SASL_PLAINTEXT
+    kafka_sasl_mechanism: SCRAM-SHA-512
+    cassandra_host: cassandra.storage.svc.cluster.local
+    redis_host: redis.storage.svc.cluster.local
+    redis_port: 6379
+    postgres_jdbc: jdbc:postgresql://postgres.storage.svc.cluster.local:5432/shoppulse
+    sink_mode: k8s
+    source_mode: kafka
+    metrics_port: 9108
