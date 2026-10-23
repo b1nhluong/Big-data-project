@@ -1,0 +1,41 @@
+# [TV1] PostgreSQL: nguồn quan hệ (lịch khuyến mãi) + DB cho Hive Metastore.
+# ConfigMap postgres-init tạo từ infra/k8s/postgres/init/*.sql (Makefile).
+apiVersion: v1
+kind: Service
+metadata: {name: postgres, namespace: storage}
+spec:
+  selector: {app: postgres}
+  ports: [{name: pg, port: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: postgres, namespace: storage}
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - {name: POSTGRES_DB, value: shoppulse}
+            - name: POSTGRES_USER
+              valueFrom: {secretKeyRef: {name: shoppulse-secrets, key: POSTGRES_USER}}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: shoppulse-secrets, key: POSTGRES_PASSWORD}}
+            - name: HIVE_DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: shoppulse-secrets, key: HIVE_DB_PASSWORD}}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports: [{containerPort: 5432}]
+          readinessProbe: {exec: {command: ["pg_isready", "-U", "shoppulse"]}, periodSeconds: 10}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {memory: 512Mi}}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d}
+      volumes: [{name: init, configMap: {name: postgres-init}}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 2Gi}}}
