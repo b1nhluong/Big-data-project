@@ -1,0 +1,53 @@
+# [TV1] Hive Metastore (Hive ecosystem — slide 2): catalog bảng cho Trino và Spark SQL
+apiVersion: v1
+kind: Service
+metadata: {name: hive-metastore, namespace: serving}
+spec:
+  selector: {app: hive-metastore}
+  ports: [{name: thrift, port: 9083}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: hive-metastore, namespace: serving}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: hive-metastore}}
+  template:
+    metadata: {labels: {app: hive-metastore}}
+    spec:
+      containers:
+        - name: metastore
+          image: shoppulse/hive-metastore:4.0.1      # infra/docker/hive-metastore/Dockerfile
+          env:
+            - {name: SERVICE_NAME, value: metastore}
+            - {name: DB_DRIVER, value: postgres}
+            - {name: HIVE_CUSTOM_CONF_DIR, value: /hive-custom-conf}
+            - {name: HADOOP_USER_NAME, value: hive}
+            - name: HIVE_DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: shoppulse-secrets, key: HIVE_DB_PASSWORD}}
+            - name: SERVICE_OPTS
+              value: >-
+                -Xmx512m
+                -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+                -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres.storage.svc.cluster.local:5432/metastore
+                -Djavax.jdo.option.ConnectionUserName=hive
+                -Djavax.jdo.option.ConnectionPassword=$(HIVE_DB_PASSWORD)
+          ports: [{containerPort: 9083}]
+          readinessProbe: {tcpSocket: {port: 9083}, initialDelaySeconds: 30, periodSeconds: 10}
+          resources: {requests: {cpu: 100m, memory: 640Mi}, limits: {memory: 1Gi}}
+          volumeMounts: [{name: conf, mountPath: /hive-custom-conf}]
+      volumes: [{name: conf, configMap: {name: hive-metastore-conf}}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: hive-metastore-conf, namespace: serving}
+data:
+  core-site.xml: |
+    <configuration>
+      <property><name>fs.defaultFS</name><value>hdfs://hdfs-namenode.storage.svc.cluster.local:8020</value></property>
+    </configuration>
+  hive-site.xml: |
+    <configuration>
+      <property><name>hive.metastore.warehouse.dir</name><value>hdfs://hdfs-namenode.storage.svc.cluster.local:8020/shoppulse/warehouse</value></property>
+      <property><name>metastore.storage.schema.reader.impl</name><value>org.apache.hadoop.hive.metastore.SerDeStorageSchemaReader</value></property>
+    </configuration>

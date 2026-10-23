@@ -1,0 +1,33 @@
+# [TV1] helm install trino trino/trino -n serving -f infra/k8s/trino/values.yaml
+# Trino = hậu duệ của Presto (slide 4.6): coordinator + worker, connector Hive & Cassandra
+image: {tag: "476"}
+server:
+  workers: 2
+  config:
+    query: {maxMemory: "2GB"}
+coordinator:
+  jvm: {maxHeapSize: "1536M"}
+  resources: {requests: {cpu: 250m, memory: 2Gi}, limits: {memory: 2Gi}}
+worker:
+  jvm: {maxHeapSize: "1536M"}
+  resources: {requests: {cpu: 250m, memory: 2Gi}, limits: {memory: 2Gi}}
+envFrom:
+  - secretRef: {name: shoppulse-secrets}
+catalogs:
+  hive: |
+    connector.name=hive
+    hive.metastore.uri=thrift://hive-metastore.serving.svc.cluster.local:9083
+    fs.hadoop.enabled=true
+    hive.config.resources=/etc/trino/hadoop/core-site.xml
+    hive.non-managed-table-writes-enabled=false
+  cassandra: |
+    connector.name=cassandra
+    cassandra.contact-points=cassandra.storage.svc.cluster.local
+    cassandra.load-policy.dc-aware.local-dc=dc1
+    cassandra.username=${ENV:CASSANDRA_READER_USER}
+    cassandra.password=${ENV:CASSANDRA_READER_PASSWORD}
+    cassandra.consistency-level=ONE
+configMounts:
+  - name: hadoop-conf
+    configMap: trino-hadoop-conf
+    path: /etc/trino/hadoop
