@@ -1,0 +1,10 @@
+# [TV1] Phương án dự phòng: cụm "giả" 1 control-plane + 3 worker trên MỘT máy (Docker Desktop ≥ 12 GB RAM).
+#   kind create cluster --name shoppulse --config infra/k3s/kind-config.yaml
+# Lưu ý: kindnet không thực thi NetworkPolicy.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+  - role: worker
