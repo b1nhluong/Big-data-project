@@ -1,0 +1,48 @@
+# [TV3] Job streaming chạy liên tục; Spark Operator tự khởi động lại khi lỗi.
+# Checkpoint trên HDFS -> khởi động lại tiếp tục đúng offset (exactly-once).
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: stream-kpi-minute
+  namespace: compute
+  labels: {app: shoppulse, layer: speed, job: kpi-minute}
+spec:
+  type: Python
+  pythonVersion: "3"
+  mode: cluster
+  image: shoppulse/spark:1.0
+  imagePullPolicy: IfNotPresent
+  mainApplicationFile: local:///opt/shoppulse/streaming/kpi_minute.py
+  arguments: ["--source", "kafka", "--trigger", "10 seconds"]
+  sparkVersion: "3.5.7"
+  restartPolicy:
+    type: Always
+    onFailureRetryInterval: 15
+    onSubmissionFailureRetryInterval: 30
+  sparkConf:
+    "spark.sql.shuffle.partitions": "12"
+    "spark.ui.prometheus.enabled": "true"
+    "spark.sql.streaming.metricsEnabled": "true"
+    "spark.kubernetes.driver.annotation.prometheus.io/scrape": "true"
+    "spark.hadoop.fs.defaultFS": "hdfs://hdfs-namenode.storage.svc.cluster.local:8020"
+  driver:
+    cores: 1
+    memory: 1g
+    serviceAccount: spark
+    labels: {app: shoppulse, spark-role: driver, job: kpi-minute}
+    env:
+      - {name: SHOPPULSE_PROFILE, value: k8s}
+      - {name: PYTHONPATH, value: /opt/shoppulse}
+      - {name: HADOOP_USER_NAME, value: spark}
+    envFrom: [{secretRef: {name: shoppulse-secrets}}]
+    ports: [{name: metrics, containerPort: 9108, protocol: TCP}]
+  executor:
+    instances: 2
+    cores: 1
+    memory: 1g
+    labels: {app: shoppulse, spark-role: executor, job: kpi-minute}
+    env:
+      - {name: SHOPPULSE_PROFILE, value: k8s}
+      - {name: PYTHONPATH, value: /opt/shoppulse}
+      - {name: HADOOP_USER_NAME, value: spark}
+    envFrom: [{secretRef: {name: shoppulse-secrets}}]

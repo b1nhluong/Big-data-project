@@ -1,0 +1,29 @@
+# [TV1] ServiceAccount cho Spark driver: chỉ được tạo/xoá pod executor trong namespace compute
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: spark, namespace: compute}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: spark-driver, namespace: compute}
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, configmaps, persistentvolumeclaims]
+    verbs: [create, get, list, watch, delete, deletecollection, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: spark-driver, namespace: compute}
+subjects: [{kind: ServiceAccount, name: spark, namespace: compute}]
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: spark-driver}
+---
+# Tài khoản chỉ-đọc cho thành viên nhóm khi demo/giám sát (kubectl --as=system:serviceaccount:serving:viewer)
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: viewer, namespace: serving}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: shoppulse-viewer}
+subjects: [{kind: ServiceAccount, name: viewer, namespace: serving}]
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view}

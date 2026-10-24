@@ -1,0 +1,10 @@
+# [TV1] helm install spark-operator spark-operator/spark-operator -n compute -f infra/k8s/spark/spark-operator-values.yaml
+spark:
+  jobNamespaces: [compute]
+  serviceAccount: {create: false, name: spark}
+controller:
+  resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 256Mi}}
+webhook:
+  enable: true          # cần cho envFrom/volume của driver/executor
+prometheus:
+  metrics: {enable: true}
