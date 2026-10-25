@@ -1,0 +1,16 @@
+{
+  "generated_at": "2026-10-25T12:55:19.018115+00:00",
+  "profile": "local",
+  "dates": "all",
+  "rows_in": 109950743,
+  "dq_counts": {
+    "valid": 109950743
+  },
+  "write_seconds": 388.206,
+  "rows_out": 109819993,
+  "duplicates_removed": 130750,
+  "null_brand_pct": 13.95,
+  "unknown_category_pct": 32.22,
+  "promo_event_pct": 7.66,
+  "dims_seconds": 620.052
+}
