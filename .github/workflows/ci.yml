@@ -1,24 +1,27 @@
-# Chạy mỗi push/PR: lint + kiểm tra manifest K8s. TV5 bật pytest khi code của cả nhóm đã có.
+# Chạy mỗi push/PR: lint, test Spark (unit + integration), kiểm tra manifest K8s
 name: ci
 on:
   push: {branches: [main]}
   pull_request:
 jobs:
-  lint:
+  test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: "17"}
       - uses: actions/setup-python@v5
-        with: {python-version: "3.11"}
-      - run: pip install "ruff>=0.6"
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements-dev.txt
       - run: ruff check --select F,E9 --line-length 130 .
+      - run: python -m pytest
   manifests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: kubeconform
         run: |
-          if [ ! -d infra/k8s ]; then echo "Chưa có infra/k8s, bỏ qua"; exit 0; fi
           curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
           ./kubeconform -summary -ignore-missing-schemas -skip CustomResourceDefinition \
             -ignore-filename-pattern 'values\.yaml$' -ignore-filename-pattern 'strimzi-values' \
