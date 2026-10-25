@@ -1,0 +1,30 @@
+# [TV3] Tạo keyspace/bảng/role. ConfigMap cassandra-schema do Makefile tạo từ serving/cassandra/schema.cql:
+#   kubectl -n storage create configmap cassandra-schema --from-file=serving/cassandra/schema.cql
+apiVersion: batch/v1
+kind: Job
+metadata: {name: cassandra-init-schema, namespace: storage}
+spec:
+  backoffLimit: 20
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: cqlsh
+          image: cassandra:4.1
+          envFrom: [{secretRef: {name: shoppulse-secrets}}]
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              H=cassandra-0.cassandra.storage.svc.cluster.local
+              ADMIN_PW="$CASSANDRA_ADMIN_PASSWORD"
+              # lần đầu: superuser mặc định cassandra/cassandra -> đổi mật khẩu ngay
+              if cqlsh $H -u cassandra -p cassandra -e "DESCRIBE KEYSPACES" >/dev/null 2>&1; then
+                cqlsh $H -u cassandra -p cassandra -e "ALTER KEYSPACE system_auth WITH replication = {'class':'NetworkTopologyStrategy','dc1':3}; ALTER ROLE cassandra WITH PASSWORD = '$ADMIN_PW';"
+              fi
+              sed -e "s/__WRITER_PASSWORD__/$CASSANDRA_PASSWORD/" -e "s/__READER_PASSWORD__/$CASSANDRA_READER_PASSWORD/" \
+                /schema/schema.cql > /tmp/schema.cql
+              cqlsh $H -u cassandra -p "$ADMIN_PW" -f /tmp/schema.cql
+              cqlsh $H -u cassandra -p "$ADMIN_PW" -e "DESCRIBE TABLES" -k shoppulse
+          volumeMounts: [{name: schema, mountPath: /schema}]
+      volumes: [{name: schema, configMap: {name: cassandra-schema}}]
